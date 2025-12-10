@@ -1,0 +1,172 @@
+# Type signatures for RubyLzma
+
+module RubyLzma
+  VERSION: String
+
+  # Get LZMA SDK version
+  def self.sdk_version: () -> String
+
+  # Get full SDK info with copyright
+  def self.sdk_info: () -> String
+
+  class Error < StandardError
+  end
+
+  module Archive
+    class Reader
+      include Enumerable[Entry]
+
+      attr_reader path: String
+
+      # Create a new reader for an archive file
+      def initialize: (String path, ?format: Integer, ?password: String?) -> void
+
+      # Open an archive file with automatic close
+      def self.open: (String path, ?format: Integer, ?password: String?) -> Reader
+                   | [T] (String path, ?format: Integer, ?password: String?) { (Reader) -> T } -> T
+
+      # Open an archive from memory buffer
+      def self.open_buffer: (String | StringIO buffer, ?format: Integer, ?password: String?) -> Reader
+                          | [T] (String | StringIO buffer, ?format: Integer, ?password: String?) { (Reader) -> T } -> T
+
+      # Get number of entries
+      def size: () -> Integer
+      alias count size
+      alias length size
+
+      # Get all entries
+      def entries: () -> Array[Entry]
+
+      # Iterate over entries
+      def each: () { (Entry) -> void } -> void
+              | () -> Enumerator[Entry, void]
+
+      # Get entry by index
+      def []: (Integer index) -> Entry?
+
+      # Extract entry to file
+      def extract: (Entry | Integer entry, String output_path) -> void
+
+      # Extract all entries to directory
+      def extract_all: (String output_dir, ?full_paths: bool) -> void
+
+      # Extract entry to memory
+      def extract_data: (Entry | Integer entry) -> String
+
+      # Test archive validity
+      def test: () -> bool
+
+      # Check if closed
+      def closed?: () -> bool
+
+      # Close the archive
+      def close: () -> void
+
+      # String representation
+      def to_s: () -> String
+      def inspect: () -> String
+    end
+
+    class Writer
+      attr_reader path: String
+
+      # Create a new archive
+      def initialize: (String path, ?format: Integer, ?level: Integer, ?solid: bool) -> void
+
+      # Create an archive with automatic close
+      def self.create: (String path, ?format: Integer, ?level: Integer, ?solid: bool) -> Writer
+                     | [T] (String path, ?format: Integer, ?level: Integer, ?solid: bool) { (Writer) -> T } -> T
+
+      # Add file to archive
+      def add_file: (String src_path, ?archive_path: String?) -> void
+
+      # Add directory recursively
+      def add_directory: (String src_path, ?archive_path: String?) -> void
+
+      # Add data from memory
+      def add_data: (String data, String archive_path) -> void
+
+      # Create directory in archive
+      def mkdir: (String archive_path) -> void
+
+      # Check if closed
+      def closed?: () -> bool
+
+      # Close the archive
+      def close: () -> void
+
+      # String representation
+      def to_s: () -> String
+      def inspect: () -> String
+    end
+  end
+
+  class Entry
+    attr_reader index: Integer
+    attr_reader name: String
+    attr_reader size: Integer
+    attr_reader compressed_size: Integer
+    attr_reader crc: Integer
+    attr_reader modified_time: Integer
+    attr_reader attributes: Integer
+
+    alias path name
+
+    # Check if entry is a directory
+    def directory?: () -> bool
+
+    # Check if entry is a file
+    def file?: () -> bool
+
+    # Get modified time as Time object
+    def mtime: () -> Time
+
+    # String representation
+    def to_s: () -> String
+    def inspect: () -> String
+  end
+
+  module FFI
+    module Constants
+      # Archive formats
+      SZ_FORMAT_7Z: Integer
+      SZ_FORMAT_ZIP: Integer
+      SZ_FORMAT_TAR: Integer
+
+      # Error codes
+      SZW_OK: Integer
+      SZW_ERROR_FAIL: Integer
+      SZW_ERROR_OUTOFMEMORY: Integer
+      SZW_ERROR_INVALIDARG: Integer
+      SZW_ERROR_OPEN_FAILED: Integer
+      SZW_ERROR_READ_FAILED: Integer
+      SZW_ERROR_WRITE_FAILED: Integer
+      SZW_ERROR_EXTRACT_FAILED: Integer
+      SZW_ERROR_COMPRESS_FAILED: Integer
+      SZW_ERROR_PASSWORD_REQUIRED: Integer
+      SZW_ERROR_PASSWORD_INCORRECT: Integer
+      SZW_ERROR_CORRUPT_ARCHIVE: Integer
+      SZW_ERROR_UNSUPPORTED_FORMAT: Integer
+
+      # Compression levels
+      SZ_LEVEL_STORE: Integer
+      SZ_LEVEL_FASTEST: Integer
+      SZ_LEVEL_FAST: Integer
+      SZ_LEVEL_NORMAL: Integer
+      SZ_LEVEL_MAXIMUM: Integer
+      SZ_LEVEL_ULTRA: Integer
+
+      ERROR_MESSAGES: Hash[Integer, String]
+    end
+
+    module Library
+      def self.check_error: (Integer error_code) -> void
+      def self.error_pointer: () -> ::FFI::MemoryPointer
+    end
+
+    module Types
+      class EntryInfo < ::FFI::Struct
+      end
+    end
+  end
+end
