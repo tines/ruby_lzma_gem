@@ -216,7 +216,7 @@ Current version focuses on **reading** archives:
 
 ## License
 
-This gem is released under the MIT License. See [LICENSE.txt](LICENSE.txt) for details.
+This gem is released under the MIT License. See [LICENSE](LICENSE) for details.
 
 The embedded LZMA SDK is **public domain** (Igor Pavlov).
 
