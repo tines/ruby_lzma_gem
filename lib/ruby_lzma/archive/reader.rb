@@ -164,12 +164,13 @@ module RubyLzma
       # @param full_paths [Boolean] Whether to preserve full paths (default: true)
       def extract_all(output_dir, full_paths: true)
         ensure_open
+        base_dir = File.expand_path(output_dir)
 
         entries.each do |entry|
           entry_path = entry.name
           entry_path = File.basename(entry_path) unless full_paths
 
-          output_path = File.join(output_dir, entry_path)
+          output_path = safe_extract_path(base_dir, entry_path)
 
           if entry.directory?
             FileUtils.mkdir_p(output_path)
@@ -246,6 +247,17 @@ module RubyLzma
       end
 
       private
+
+      def safe_extract_path(base_dir, entry_path)
+        cleaned = entry_path.to_s.gsub(/\A[\/\\]+/, "")
+        full_path = File.expand_path(File.join(base_dir, cleaned))
+
+        unless full_path.start_with?("#{base_dir}/") || full_path == base_dir
+          raise Error, "Unsafe path in archive: #{entry_path}"
+        end
+
+        full_path
+      end
 
       def open_archive
         raise Error, "File not found: #{@path}" unless File.exist?(@path)
