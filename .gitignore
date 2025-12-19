@@ -1,0 +1,22 @@
+/.bundle/
+/.claude/
+/.yardoc
+/_yardoc/
+/coverage/
+/doc/
+/pkg/
+/spec/reports/
+/tmp/
+
+# Build artifacts
+*.bundle
+*.so
+*.dll
+*.dylib
+lib/lzma_sdk_wrapper/
+
+# rspec failure tracking
+.rspec_status
+
+# macOS
+.DS_Store
