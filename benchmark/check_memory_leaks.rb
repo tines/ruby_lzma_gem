@@ -195,7 +195,41 @@ class MemoryLeakDetector
         entries = reader.entries
       end
     end
-    
+
+    # Test 7: Create archive (Writer)
+    output_archive = File.join(FIXTURES_DIR, '..', 'output', 'test_write.7z')
+    FileUtils.mkdir_p(File.dirname(output_archive))
+    test_operation("Create archive (Writer)", archive_path, nil) do |path, pwd|
+      FileUtils.rm_f(output_archive)
+      RubyLzma::Archive::Writer.open(output_archive) do |writer|
+        writer.add_data("Test data content", "test.txt")
+        writer.add_data("More content here", "data.txt")
+      end
+    end
+    FileUtils.rm_f(output_archive)
+
+    # Test 8: Create encrypted archive
+    test_operation("Create encrypted archive", archive_path, nil) do |path, pwd|
+      FileUtils.rm_f(output_archive)
+      RubyLzma::Archive::Writer.open(output_archive, password: 'test123') do |writer|
+        writer.add_data("Secret data", "secret.txt")
+      end
+    end
+    FileUtils.rm_f(output_archive)
+
+    # Test 9: Create large archive
+    large_data = "x" * 100_000
+    test_operation("Create large archive", archive_path, nil) do |path, pwd|
+      FileUtils.rm_f(output_archive)
+      RubyLzma::Archive::Writer.open(output_archive) do |writer|
+        5.times do |i|
+          writer.add_data(large_data, "large_#{i}.txt")
+        end
+      end
+    end
+    FileUtils.rm_f(output_archive)
+    FileUtils.rm_rf(File.dirname(output_archive))
+
     # Summary
     print_summary
   end

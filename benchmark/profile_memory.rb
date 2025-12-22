@@ -115,6 +115,33 @@ reports[:password] = profile_operation("Password-protected archive") do
   end
 end
 
+# Writer operations
+output_archive = File.join(FIXTURES_DIR, '..', 'output', 'profile_test.7z')
+FileUtils.mkdir_p(File.dirname(output_archive))
+
+# 6. Create archive
+reports[:create] = profile_operation("Create archive (Writer)") do
+  FileUtils.rm_f(output_archive)
+  RubyLzma::Archive::Writer.open(output_archive) do |writer|
+    10.times do |i|
+      writer.add_data("Test data content #{i}" * 100, "file_#{i}.txt")
+    end
+  end
+end
+
+# 7. Create encrypted archive
+reports[:create_encrypted] = profile_operation("Create encrypted archive") do
+  FileUtils.rm_f(output_archive)
+  RubyLzma::Archive::Writer.open(output_archive, password: 'test123') do |writer|
+    5.times do |i|
+      writer.add_data("Secret data #{i}" * 100, "secret_#{i}.txt")
+    end
+  end
+end
+
+FileUtils.rm_f(output_archive)
+FileUtils.rm_rf(File.dirname(output_archive))
+
 # Summary
 puts "\n" + "=" * 70
 puts "Summary"

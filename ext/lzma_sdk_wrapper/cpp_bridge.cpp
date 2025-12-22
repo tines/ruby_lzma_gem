@@ -7,6 +7,7 @@
 #include <cstring>
 #include <cstdio>
 #include <stdexcept>
+#include <sys/stat.h>
 
 // C++ API includes for password support
 #include "lzma_sdk/CPP/7zip/Archive/IArchive.h"
@@ -1018,54 +1019,266 @@ const char* ArchiveReader::getErrorMessage() {
 
 class ArchiveWriter::Impl {
 public:
-    /* TODO: Add writer-specific state */
+    std::string archivePath;
+    int format;
+    std::vector<CArchiveItem> items;
     bool isOpen;
 
-    Impl() : isOpen(false) {}
+    Impl() : format(SZ_FORMAT_7Z), isOpen(false) {}
 };
 
 ArchiveWriter::ArchiveWriter()
     : pImpl(new Impl())  // Use new directly for C++11 compatibility
     , progressCallback(nullptr)
     , progressUserData(nullptr) {
+    memset(&options, 0, sizeof(options));
+    options.method = SZ_METHOD_LZMA2;
+    options.level = SZ_LEVEL_NORMAL;
 }
 
 ArchiveWriter::~ArchiveWriter() {
-    close();
+    // Note: finalize() should be called explicitly before destruction
+    // We don't call it here because errors can't be propagated from destructors
 }
 
 int ArchiveWriter::create(const char* path, int format, const SzCompressionOptions* opts) {
-    /* TODO: Implement archive creation */
-    errorMessage = "Not yet implemented";
-    return SZW_ERROR_FAIL;
+    try {
+        pImpl->archivePath = path;
+        pImpl->format = format;
+        pImpl->items.clear();
+
+        if (opts) {
+            options = *opts;
+        }
+
+        pImpl->isOpen = true;
+        return SZW_OK;
+
+    } catch (const std::exception& e) {
+        errorMessage = e.what();
+        return SZW_ERROR_FAIL;
+    }
 }
 
-void ArchiveWriter::close() {
-    pImpl->isOpen = false;
+int ArchiveWriter::finalize() {
+    if (!pImpl->isOpen) {
+        return SZW_OK;  // Already finalized
+    }
+
+    try {
+        // Initialize 7z format GUID using shared definition
+        GUID CLSID_Format7z;
+        Init7zFormatGUID(&CLSID_Format7z);
+
+        // Create output archive handler
+        CMyComPtr<IOutArchive> outArchive;
+        HRESULT hr = CreateArchiver(&CLSID_Format7z, &IID_IOutArchive, (void**)&outArchive);
+        if (hr != S_OK || !outArchive) {
+            errorMessage = "Failed to create 7z output handler";
+            pImpl->isOpen = false;
+            return SZW_ERROR_FAIL;
+        }
+
+        // Set compression properties if needed
+        if (options.level != SZ_LEVEL_NORMAL || options.method != SZ_METHOD_LZMA2 || !options.solid) {
+            CMyComPtr<ISetProperties> setProperties;
+            outArchive->QueryInterface(IID_ISetProperties, (void**)&setProperties);
+            if (setProperties) {
+                const wchar_t *names[3];
+                NWindows::NCOM::CPropVariant values[3];
+                unsigned numProps = 0;
+
+                // Compression level
+                names[numProps] = L"x";
+                values[numProps] = (UInt32)options.level;
+                numProps++;
+
+                // Solid mode
+                names[numProps] = L"s";
+                values[numProps] = options.solid;
+                numProps++;
+
+                // Method
+                if (options.method == SZ_METHOD_LZMA) {
+                    names[numProps] = L"m";
+                    values[numProps] = L"lzma";
+                    numProps++;
+                } else if (options.method == SZ_METHOD_PPMD) {
+                    names[numProps] = L"m";
+                    values[numProps] = L"ppmd";
+                    numProps++;
+                }
+
+                setProperties->SetProperties(names, values, numProps);
+            }
+        }
+
+        // Create output file stream
+        COutFileStream *outFileStreamSpec = new COutFileStream;
+        CMyComPtr<IOutStream> outFileStream = outFileStreamSpec;
+
+        FString archivePathFS = us2fs(GetUnicodeString(pImpl->archivePath.c_str()));
+        if (!outFileStreamSpec->Create_NEW(archivePathFS)) {
+            errorMessage = "Failed to create output archive file";
+            pImpl->isOpen = false;
+            return SZW_ERROR_WRITE_FAILED;
+        }
+
+        // Create update callback
+        CArchiveUpdateCallback *updateCallbackSpec = new CArchiveUpdateCallback;
+        CMyComPtr<IArchiveUpdateCallback2> updateCallback(updateCallbackSpec);
+        updateCallbackSpec->Init(&pImpl->items);
+
+        if (!password.empty()) {
+            updateCallbackSpec->SetPassword(password.c_str());
+        }
+
+        // Perform the update (create archive)
+        hr = outArchive->UpdateItems(outFileStream,
+                                     static_cast<UInt32>(pImpl->items.size()),
+                                     updateCallback);
+
+        pImpl->isOpen = false;
+
+        if (hr != S_OK) {
+            char errBuf[256];
+            snprintf(errBuf, sizeof(errBuf), "Failed to create archive (HRESULT: 0x%08X)", (unsigned int)hr);
+            errorMessage = errBuf;
+            return SZW_ERROR_COMPRESS_FAILED;
+        }
+
+        return SZW_OK;
+
+    } catch (const std::exception& e) {
+        errorMessage = e.what();
+        pImpl->isOpen = false;
+        return SZW_ERROR_FAIL;
+    }
 }
 
 int ArchiveWriter::addFile(const char* src_path, const char* archive_path) {
-    /* TODO: Implement add file */
-    errorMessage = "Not yet implemented";
-    return SZW_ERROR_FAIL;
+    if (!pImpl->isOpen) {
+        errorMessage = "Archive not open";
+        return SZW_ERROR_FAIL;
+    }
+
+    try {
+        FString fullPath = us2fs(GetUnicodeString(src_path));
+
+        // Check if file exists using standard C API
+        struct stat st;
+        if (stat(src_path, &st) != 0) {
+            errorMessage = "File not found";
+            return SZW_ERROR_OPEN_FAILED;
+        }
+
+        if (S_ISDIR(st.st_mode)) {
+            errorMessage = "Path is a directory, use addDirectory";
+            return SZW_ERROR_INVALIDARG;
+        }
+
+        CArchiveItem item;
+        item.Path = GetUnicodeString(archive_path);
+        item.FullPath = fullPath;
+        item.Size = st.st_size;
+        item.IsDir = false;
+        item.IsFromMemory = false;
+
+        pImpl->items.push_back(item);
+        return SZW_OK;
+
+    } catch (const std::exception& e) {
+        errorMessage = e.what();
+        return SZW_ERROR_FAIL;
+    }
 }
 
 int ArchiveWriter::addDirectory(const char* src_path, const char* archive_path) {
-    /* TODO: Implement add directory */
-    errorMessage = "Not yet implemented";
-    return SZW_ERROR_FAIL;
+    if (!pImpl->isOpen) {
+        errorMessage = "Archive not open";
+        return SZW_ERROR_FAIL;
+    }
+
+    try {
+        FString basePath = us2fs(GetUnicodeString(src_path));
+        UString archiveBase = GetUnicodeString(archive_path);
+
+        // Check if directory exists using standard C API
+        struct stat st;
+        if (stat(src_path, &st) != 0) {
+            errorMessage = "Directory not found";
+            return SZW_ERROR_OPEN_FAILED;
+        }
+
+        if (!S_ISDIR(st.st_mode)) {
+            errorMessage = "Path is not a directory";
+            return SZW_ERROR_INVALIDARG;
+        }
+
+        // Add the directory entry itself
+        CArchiveItem dirItem;
+        dirItem.Path = archiveBase;
+        dirItem.FullPath = basePath;
+        dirItem.Size = 0;
+        dirItem.IsDir = true;
+        dirItem.IsFromMemory = false;
+        pImpl->items.push_back(dirItem);
+
+        // Note: Recursive directory enumeration would require additional
+        // platform-specific code. For now, just add the directory entry.
+        // Files should be added individually using addFile.
+
+        return SZW_OK;
+
+    } catch (const std::exception& e) {
+        errorMessage = e.what();
+        return SZW_ERROR_FAIL;
+    }
 }
 
 int ArchiveWriter::addData(const uint8_t* data, size_t size, const char* archive_path) {
-    /* TODO: Implement add data */
-    errorMessage = "Not yet implemented";
-    return SZW_ERROR_FAIL;
+    if (!pImpl->isOpen) {
+        errorMessage = "Archive not open";
+        return SZW_ERROR_FAIL;
+    }
+
+    try {
+        CArchiveItem item;
+        item.Path = GetUnicodeString(archive_path);
+        item.Size = size;
+        item.IsDir = false;
+        item.IsFromMemory = true;
+        item.Data.assign(data, data + size);
+
+        pImpl->items.push_back(item);
+        return SZW_OK;
+
+    } catch (const std::exception& e) {
+        errorMessage = e.what();
+        return SZW_ERROR_FAIL;
+    }
 }
 
 int ArchiveWriter::mkdir(const char* archive_path) {
-    /* TODO: Implement mkdir */
-    errorMessage = "Not yet implemented";
-    return SZW_ERROR_FAIL;
+    if (!pImpl->isOpen) {
+        errorMessage = "Archive not open";
+        return SZW_ERROR_FAIL;
+    }
+
+    try {
+        CArchiveItem item;
+        item.Path = GetUnicodeString(archive_path);
+        item.Size = 0;
+        item.IsDir = true;
+        item.IsFromMemory = false;
+
+        pImpl->items.push_back(item);
+        return SZW_OK;
+
+    } catch (const std::exception& e) {
+        errorMessage = e.what();
+        return SZW_ERROR_FAIL;
+    }
 }
 
 int ArchiveWriter::setPassword(const char* pwd) {
@@ -1130,8 +1343,10 @@ void* cpp_open_archive_from_memory(const uint8_t* data, size_t size, int format,
 int cpp_close_archive(void* handle) {
     try {
         auto* archive = static_cast<LzmaSdkWrapper::ArchiveHandle*>(handle);
+        // Call finalize() before destruction to allow writers to complete
+        int result = archive->finalize();
         delete archive;
-        return SZW_OK;
+        return result;
     } catch (...) {
         return SZW_ERROR_FAIL;
     }

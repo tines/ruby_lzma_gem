@@ -84,7 +84,7 @@ else
 end
 
 # 7-Zip SDK defines
-$CXXFLAGS << " -DZ7_EXTRACT_ONLY"  # We only need extraction, not compression
+# Note: Z7_EXTRACT_ONLY is NOT defined to enable both extraction AND compression
 $CXXFLAGS << " -DZ7_ST"             # Single-threaded for simplicity
 $CFLAGS << " -DZ7_ST"
 

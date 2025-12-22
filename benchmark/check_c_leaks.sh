@@ -36,18 +36,23 @@ fi
 
 # Create the test script content
 TEST_SCRIPT_CONTENT='
+require "fileutils"
 require_relative "/workspace/lib/ruby_lzma"
 
 archive = ARGV[0]
+output_dir = "/tmp/valgrind_test_output"
+FileUtils.mkdir_p(output_dir)
 
 puts "Running memory leak tests..."
+
+# ============= READER TESTS =============
 
 # Test 1: Open and close
 10.times do
   reader = RubyLzma::Archive::Reader.new(archive)
   reader.close
 end
-puts "  Test 1: Open/Close - done"
+puts "  Test 1: Reader Open/Close - done"
 
 # Test 2: Extract to memory
 RubyLzma::Archive::Reader.open(archive) do |reader|
@@ -56,14 +61,95 @@ RubyLzma::Archive::Reader.open(archive) do |reader|
     data = reader.extract_data(i)
   end
 end
-puts "  Test 2: Extract to memory - done"
+puts "  Test 2: Reader Extract to memory - done"
 
 # Test 3: Verify
 RubyLzma::Archive::Reader.open(archive) do |reader|
   reader.test
 end
-puts "  Test 3: Verify - done"
+puts "  Test 3: Reader Verify - done"
 
+# ============= WRITER TESTS =============
+
+# Test 4: Create archive with add_data
+10.times do |n|
+  output_archive = "#{output_dir}/test_write_#{n}.7z"
+  RubyLzma::Archive::Writer.open(output_archive) do |writer|
+    writer.add_data("Test data content #{n}", "file.txt")
+  end
+  FileUtils.rm_f(output_archive)
+end
+puts "  Test 4: Writer Create with add_data - done"
+
+# Test 5: Create archive with multiple entries
+5.times do |n|
+  output_archive = "#{output_dir}/test_multi_#{n}.7z"
+  RubyLzma::Archive::Writer.open(output_archive) do |writer|
+    5.times do |i|
+      writer.add_data("Content for file #{i}" * 100, "file_#{i}.txt")
+    end
+    writer.mkdir("empty_dir")
+  end
+  FileUtils.rm_f(output_archive)
+end
+puts "  Test 5: Writer Create multiple entries - done"
+
+# Test 6: Create encrypted archive
+5.times do |n|
+  output_archive = "#{output_dir}/test_encrypted_#{n}.7z"
+  RubyLzma::Archive::Writer.open(output_archive, password: "TestPassword123") do |writer|
+    writer.add_data("Secret data #{n}" * 50, "secret.txt")
+  end
+  FileUtils.rm_f(output_archive)
+end
+puts "  Test 6: Writer Create encrypted - done"
+
+# Test 7: Create large archive
+3.times do |n|
+  output_archive = "#{output_dir}/test_large_#{n}.7z"
+  large_data = "x" * 100_000  # 100KB
+  RubyLzma::Archive::Writer.open(output_archive) do |writer|
+    3.times do |i|
+      writer.add_data(large_data, "large_#{i}.txt")
+    end
+  end
+  FileUtils.rm_f(output_archive)
+end
+puts "  Test 7: Writer Create large archive - done"
+
+# Test 8: Writer open and close explicitly
+5.times do |n|
+  output_archive = "#{output_dir}/test_explicit_#{n}.7z"
+  writer = RubyLzma::Archive::Writer.new(output_archive)
+  writer.add_data("Test content", "test.txt")
+  writer.close
+  FileUtils.rm_f(output_archive)
+end
+puts "  Test 8: Writer explicit open/close - done"
+
+# ============= ROUND-TRIP TEST =============
+
+# Test 9: Write and then read back (round-trip)
+3.times do |n|
+  output_archive = "#{output_dir}/test_roundtrip_#{n}.7z"
+  test_content = "Round trip test data #{n}" * 100
+
+  # Write
+  RubyLzma::Archive::Writer.open(output_archive) do |writer|
+    writer.add_data(test_content, "roundtrip.txt")
+  end
+
+  # Read back
+  RubyLzma::Archive::Reader.open(output_archive) do |reader|
+    data = reader.extract_data(0)
+    raise "Data mismatch!" unless data == test_content
+  end
+
+  FileUtils.rm_f(output_archive)
+end
+puts "  Test 9: Round-trip write/read - done"
+
+FileUtils.rm_rf(output_dir)
 puts "All tests completed successfully"
 '
 

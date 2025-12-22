@@ -315,6 +315,106 @@ class BenchmarkRunner
     }
   end
 
+  # Benchmark: Create archive with files
+  def benchmark_create_archive(source_dir, password)
+    puts "    Create archive..."
+
+    output_ruby = File.join(OUTPUT_DIR, 'ruby_created.7z')
+    output_cli = File.join(OUTPUT_DIR, 'cli_created.7z')
+
+    # Get list of files to add
+    files = Dir.glob("#{source_dir}/**/*").select { |f| File.file?(f) }
+    return nil if files.empty?
+
+    # Our library
+    FileUtils.rm_f(output_ruby)
+    our_time = benchmark_operation("create_ruby") do
+      RubyLzma::Archive::Writer.open(output_ruby, password: password) do |writer|
+        files.each do |file|
+          rel_path = file.sub("#{source_dir}/", '')
+          writer.add_file(file, rel_path)
+        end
+      end
+    end
+
+    # 7z CLI
+    FileUtils.rm_f(output_cli)
+    cli_time = benchmark_operation("create_7z") do
+      cmd = ['7z', 'a', output_cli]
+      cmd += ["-p#{password}"] if password
+      cmd += ['-mhe=on'] if password  # Encrypt headers
+      cmd << "#{source_dir}/*"
+      system(*cmd, out: '/dev/null', err: '/dev/null')
+    end
+
+    speedup_vs_cli = cli_time / our_time
+
+    # Cleanup
+    FileUtils.rm_f(output_ruby)
+    FileUtils.rm_f(output_cli)
+
+    {
+      operation: 'Create archive',
+      our_time: our_time,
+      szr_time: nil,
+      cli_time: cli_time,
+      speedup_vs_cli: speedup_vs_cli,
+      speedup_vs_szr: nil
+    }
+  end
+
+  # Benchmark: Add data from memory
+  def benchmark_add_data_memory(password)
+    puts "    Add data from memory..."
+
+    output_ruby = File.join(OUTPUT_DIR, 'ruby_memory.7z')
+
+    # Generate test data
+    test_data = "x" * 10000
+
+    # Our library
+    FileUtils.rm_f(output_ruby)
+    our_time = benchmark_operation("add_data_ruby") do
+      RubyLzma::Archive::Writer.open(output_ruby, password: password) do |writer|
+        10.times do |i|
+          writer.add_data(test_data, "file_#{i}.txt")
+        end
+      end
+    end
+
+    # 7z CLI (write temp files, then add)
+    cli_time = benchmark_operation("add_data_7z") do
+      temp_files = []
+      10.times do |i|
+        temp_file = File.join(OUTPUT_DIR, "temp_#{i}.txt")
+        File.write(temp_file, test_data)
+        temp_files << temp_file
+      end
+
+      output_cli = File.join(OUTPUT_DIR, 'cli_memory.7z')
+      cmd = ['7z', 'a', output_cli]
+      cmd += ["-p#{password}"] if password
+      cmd += temp_files
+      system(*cmd, out: '/dev/null', err: '/dev/null')
+
+      temp_files.each { |f| FileUtils.rm_f(f) }
+      FileUtils.rm_f(output_cli)
+    end
+
+    speedup_vs_cli = cli_time / our_time
+
+    FileUtils.rm_f(output_ruby)
+
+    {
+      operation: 'Add data (memory)',
+      our_time: our_time,
+      szr_time: nil,
+      cli_time: cli_time,
+      speedup_vs_cli: speedup_vs_cli,
+      speedup_vs_szr: nil
+    }
+  end
+
   def run_benchmark_suite(config)
     archive_path = get_archive_path(config)
     
@@ -334,12 +434,20 @@ class BenchmarkRunner
     
     suite_results = []
     
-    # Run all benchmarks
+    # Run all read benchmarks
     suite_results << benchmark_list_entries(archive_path, password)
     suite_results << benchmark_verify(archive_path, password)
     suite_results << benchmark_extract_files(archive_path, password)
     suite_results << benchmark_extract_memory(archive_path, password)
     suite_results << benchmark_open_memory(archive_path, password)
+
+    # Run write benchmarks
+    source_dir = File.join(FIXTURES_DIR, 'data', config[:name])
+    if File.directory?(source_dir)
+      create_result = benchmark_create_archive(source_dir, password)
+      suite_results << create_result if create_result
+    end
+    suite_results << benchmark_add_data_memory(password)
     
     # Print results table
     has_original_comparison = suite_results.any? { |r| r[:szr_time] }

@@ -54,6 +54,15 @@ module RubyLzma
         end
       end
 
+      # Compression options structure matching C struct SzCompressionOptions
+      class CompressionOptions < ::FFI::Struct
+        layout :method, :int,           # Compression method (SZ_METHOD_*)
+               :level, :int,            # Compression level (0-9)
+               :threads, :int,          # Number of threads (0 = auto)
+               :dictionary_size, :uint32, # Dictionary size in bytes
+               :solid, :bool            # Use solid compression
+      end
+
       # Progress callback function signature
       # void (*progress_callback)(uint64_t completed, uint64_t total, void* user_data)
       callback :progress_callback, [:uint64, :uint64, :pointer], :void
