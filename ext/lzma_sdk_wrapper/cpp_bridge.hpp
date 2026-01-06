@@ -6,6 +6,7 @@
 #define CPP_BRIDGE_HPP
 
 #include "lzma_sdk_wrapper.h"
+#include "archive_callbacks.hpp"
 
 #include <string>
 #include <vector>
@@ -38,6 +39,7 @@ public:
     virtual int setPassword(const char* password) = 0;
     virtual int setProgressCallback(SzProgressCallback callback, void* user_data) = 0;
     virtual const char* getErrorMessage() = 0;
+    virtual int finalize() { return SZW_OK; }  // For writers to complete the archive
 };
 
 /**
@@ -92,7 +94,6 @@ public:
     ~ArchiveWriter() override;
 
     int create(const char* path, int format, const SzCompressionOptions* options);
-    void close();
 
     int addFile(const char* src_path, const char* archive_path);
     int addDirectory(const char* src_path, const char* archive_path);
@@ -109,6 +110,7 @@ public:
     int setPassword(const char* password) override;
     int setProgressCallback(SzProgressCallback callback, void* user_data) override;
     const char* getErrorMessage() override;
+    int finalize() override;  // Finalize and write the archive
 
 private:
     class Impl;

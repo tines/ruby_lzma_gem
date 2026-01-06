@@ -53,6 +53,13 @@ module RubyLzma
       attach_function :sz_extract_to_memory, [:pointer, :uint32, :pointer, :pointer], :int
       attach_function :sz_verify, [:pointer], :int
 
+      # Compression/Archive creation operations
+      attach_function :sz_create_archive, [:string, :int, Types::CompressionOptions.by_ref], :pointer
+      attach_function :sz_add_file, [:pointer, :string, :string], :int
+      attach_function :sz_add_directory, [:pointer, :string, :string], :int
+      attach_function :sz_add_data, [:pointer, :pointer, :size_t, :string], :int
+      attach_function :sz_mkdir, [:pointer, :string], :int
+
       # Memory management
       attach_function :sz_free, [:pointer], :void
 
@@ -63,6 +70,9 @@ module RubyLzma
       # Version info
       attach_function :sz_get_version, [], :string
       attach_function :sz_get_sdk_info, [], :string
+
+      # Error info
+      attach_function :sz_get_error_message, [:pointer], :string
 
       # Helper method to check error codes and raise exceptions
       def self.check_error(error_code)

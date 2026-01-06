@@ -4,11 +4,14 @@
 #ifndef ARCHIVE_CALLBACKS_HPP
 #define ARCHIVE_CALLBACKS_HPP
 
+#include <vector>
 #include "lzma_sdk/CPP/7zip/Archive/IArchive.h"
 #include "lzma_sdk/CPP/7zip/IPassword.h"
 #include "lzma_sdk/CPP/Common/MyCom.h"
 #include "lzma_sdk/CPP/Common/MyString.h"
 #include "lzma_sdk/CPP/7zip/Common/FileStreams.h"
+#include "lzma_sdk/CPP/Windows/FileName.h"
+#include "lzma_sdk/CPP/Windows/FileFind.h"
 
 // Archive open callback with password support
 class CArchiveOpenCallback Z7_final:
@@ -111,6 +114,48 @@ public:
     PasswordIsDefined(false) {}
 
   void Init(IInArchive *archiveHandler);
+  void SetPassword(const char* password);
+  UInt64 GetNumErrors() const { return _numErrors; }
+};
+
+// ==================== Archive Creation Callbacks ====================
+
+// Structure to hold information about items to add to archive
+struct CArchiveItem
+{
+  UString Path;           // Path within archive
+  FString FullPath;       // Full path on disk (for files)
+  UInt64 Size;            // Size in bytes
+  bool IsDir;             // Is this a directory?
+  bool IsFromMemory;      // Is data from memory (not disk)?
+  std::vector<Byte> Data; // Memory buffer for in-memory items
+
+  CArchiveItem() : Size(0), IsDir(false), IsFromMemory(false) {}
+};
+
+// Archive update callback for creating new archives
+class CArchiveUpdateCallback Z7_final:
+  public IArchiveUpdateCallback2,
+  public ICryptoGetTextPassword2,
+  public CMyUnknownImp
+{
+  Z7_IFACES_IMP_UNK_2(IArchiveUpdateCallback2, ICryptoGetTextPassword2)
+  Z7_IFACE_COM7_IMP(IProgress)
+  Z7_IFACE_COM7_IMP(IArchiveUpdateCallback)
+
+  const std::vector<CArchiveItem> *_items;
+  UInt64 _numErrors;
+
+public:
+  bool PasswordIsDefined;
+  UString Password;
+
+  CArchiveUpdateCallback() :
+    _items(nullptr),
+    _numErrors(0),
+    PasswordIsDefined(false) {}
+
+  void Init(const std::vector<CArchiveItem> *items);
   void SetPassword(const char* password);
   UInt64 GetNumErrors() const { return _numErrors; }
 };

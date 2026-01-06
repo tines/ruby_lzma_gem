@@ -18,6 +18,18 @@ module RubyLzma
 
       attr_reader path: String
 
+      # Security limits (class-level configuration)
+      DEFAULT_MAX_ENTRY_SIZE: Integer
+      DEFAULT_MAX_TOTAL_SIZE: Integer
+      DEFAULT_MAX_COMPRESSION_RATIO: Integer
+
+      def self.max_entry_size: () -> Integer?
+      def self.max_entry_size=: (Integer?) -> Integer?
+      def self.max_total_size: () -> Integer?
+      def self.max_total_size=: (Integer?) -> Integer?
+      def self.max_compression_ratio: () -> Integer?
+      def self.max_compression_ratio=: (Integer?) -> Integer?
+
       # Create a new reader for an archive file
       def initialize: (String path, ?format: Integer, ?password: String?) -> void
 
@@ -65,29 +77,56 @@ module RubyLzma
       # String representation
       def to_s: () -> String
       def inspect: () -> String
+
+      # Security error classes
+      class ExtractionLimitError < RubyLzma::Error
+      end
+
+      class PathTraversalError < RubyLzma::Error
+      end
     end
 
     class Writer
       attr_reader path: String
 
+      # Compression methods
+      METHOD_LZMA: Integer
+      METHOD_LZMA2: Integer
+      METHOD_PPMD: Integer
+      METHOD_BZIP2: Integer
+      METHOD_DEFLATE: Integer
+
+      # Compression levels
+      LEVEL_STORE: Integer
+      LEVEL_FASTEST: Integer
+      LEVEL_FAST: Integer
+      LEVEL_NORMAL: Integer
+      LEVEL_MAXIMUM: Integer
+      LEVEL_ULTRA: Integer
+
       # Create a new archive
-      def initialize: (String path, ?format: Integer, ?level: Integer, ?solid: bool) -> void
+      def initialize: (String path, ?format: Integer, ?password: String?, ?method: Integer, ?level: Integer, ?solid: bool) -> void
 
-      # Create an archive with automatic close
-      def self.create: (String path, ?format: Integer, ?level: Integer, ?solid: bool) -> Writer
-                     | [T] (String path, ?format: Integer, ?level: Integer, ?solid: bool) { (Writer) -> T } -> T
+      # Open an archive with automatic close
+      def self.open: (String path, ?format: Integer, ?password: String?, ?method: Integer, ?level: Integer, ?solid: bool) -> Writer
+                   | [T] (String path, ?format: Integer, ?password: String?, ?method: Integer, ?level: Integer, ?solid: bool) { (Writer) -> T } -> T
 
-      # Add file to archive
-      def add_file: (String src_path, ?archive_path: String?) -> void
+      # Add file to archive (raises PathTraversalError for unsafe paths)
+      def add_file: (String src_path, ?String? archive_path) -> void
 
-      # Add directory recursively
-      def add_directory: (String src_path, ?archive_path: String?) -> void
+      # Add directory recursively (raises PathTraversalError for unsafe paths)
+      def add_directory: (String src_path, ?String? archive_path) -> void
 
-      # Add data from memory
+      # Add data from memory (raises PathTraversalError for unsafe paths)
       def add_data: (String data, String archive_path) -> void
 
-      # Create directory in archive
+      # Create directory in archive (raises PathTraversalError for unsafe paths)
       def mkdir: (String archive_path) -> void
+
+      # Get the number of entries
+      def size: () -> Integer
+      alias count size
+      alias length size
 
       # Check if closed
       def closed?: () -> bool
@@ -98,6 +137,10 @@ module RubyLzma
       # String representation
       def to_s: () -> String
       def inspect: () -> String
+
+      # Security error class
+      class PathTraversalError < RubyLzma::Error
+      end
     end
   end
 
@@ -156,6 +199,13 @@ module RubyLzma
       SZ_LEVEL_MAXIMUM: Integer
       SZ_LEVEL_ULTRA: Integer
 
+      # Compression methods
+      SZ_METHOD_LZMA: Integer
+      SZ_METHOD_LZMA2: Integer
+      SZ_METHOD_PPMD: Integer
+      SZ_METHOD_BZIP2: Integer
+      SZ_METHOD_DEFLATE: Integer
+
       ERROR_MESSAGES: Hash[Integer, String]
     end
 
@@ -166,6 +216,9 @@ module RubyLzma
 
     module Types
       class EntryInfo < ::FFI::Struct
+      end
+
+      class CompressionOptions < ::FFI::Struct
       end
     end
   end
