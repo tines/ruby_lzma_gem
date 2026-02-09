@@ -24,12 +24,14 @@ module RubyLzma
       end
     end
 
-    # Check if format is supported by current C API
+    # Check if format is supported
     #
     # @param format [Integer] Format constant
     # @return [Boolean] true if fully supported
     def self.supported?(format)
-      format == FFI::Constants::SZ_FORMAT_7Z
+      [FFI::Constants::SZ_FORMAT_7Z,
+       FFI::Constants::SZ_FORMAT_ZIP,
+       FFI::Constants::SZ_FORMAT_TAR].include?(format)
     end
 
     # Get format name

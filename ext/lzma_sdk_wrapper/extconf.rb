@@ -30,7 +30,7 @@ when :macos
 when :linux
   $CXXFLAGS << " -std=c++11"
   $CFLAGS << " -std=c11"
-  $LDFLAGS << " -lstdc++"
+  $LDFLAGS << " -lstdc++ -lpthread"
 
 when :windows
   if RbConfig::CONFIG["CC"] =~ /gcc|g\+\+/ # MinGW
@@ -137,6 +137,8 @@ include_dirs = [
   "lzma_sdk/CPP/7zip/Common",
   "lzma_sdk/CPP/7zip/Archive/Common",
   "lzma_sdk/CPP/7zip/Archive/7z",
+  "lzma_sdk/CPP/7zip/Archive/Zip",
+  "lzma_sdk/CPP/7zip/Archive/Tar",
   "lzma_sdk/CPP/7zip/Compress",
   "lzma_sdk/CPP/7zip/Crypto",
 ]
@@ -160,17 +162,19 @@ end
 # However, SOME Windows files are Windows-only (need ShlObj.h, CreateFileMapping, etc.)
 # so we use a whitelist approach for cross-platform files:
 windows_cross_platform = [
-  "FileDir.cpp",          # Cross-platform directory operations
-  "FileFind.cpp",         # Cross-platform file finding
-  "FileIO.cpp",           # Cross-platform file I/O
-  "FileName.cpp",         # Cross-platform filename handling
-  "PropVariant.cpp",      # Cross-platform property variants
-  "PropVariantConv.cpp",  # Cross-platform property conversion
-  "System.cpp",           # Cross-platform system info
-  "TimeUtils.cpp",        # Cross-platform time utilities
-  "ErrorMsg.cpp",         # Cross-platform error messages
-  "FileSystem.cpp",       # Cross-platform filesystem operations
-  "SystemInfo.cpp",       # Cross-platform system information
+  "FileDir.cpp",           # Cross-platform directory operations
+  "FileFind.cpp",          # Cross-platform file finding
+  "FileIO.cpp",            # Cross-platform file I/O
+  "FileName.cpp",          # Cross-platform filename handling
+  "PropVariant.cpp",       # Cross-platform property variants
+  "PropVariantConv.cpp",   # Cross-platform property conversion
+  "PropVariantUtils.cpp",  # Cross-platform property variant utilities (used by Zip handler)
+  "Synchronization.cpp",   # Cross-platform synchronization (WFMO vtables needed by MemBlocks, OutMemStream)
+  "System.cpp",            # Cross-platform system info
+  "TimeUtils.cpp",         # Cross-platform time utilities
+  "ErrorMsg.cpp",          # Cross-platform error messages
+  "FileSystem.cpp",        # Cross-platform filesystem operations
+  "SystemInfo.cpp",        # Cross-platform system information
 ]
 windows_cross_platform.each do |file|
   lzma_cpp_files << "lzma_sdk/CPP/Windows/#{file}"

@@ -256,7 +256,7 @@ RSpec.describe RubyLzma::Archive::Reader do
     it "has default extraction limits" do
       expect(described_class.max_entry_size).to eq(1024 * 1024 * 1024)  # 1 GB
       expect(described_class.max_total_size).to eq(10 * 1024 * 1024 * 1024)  # 10 GB
-      expect(described_class.max_compression_ratio).to eq(1000)
+      expect(described_class.max_compression_ratio).to eq(10_000)
       expect(described_class.max_size_for_unknown_ratio).to eq(10 * 1024 * 1024)  # 10 MB
     end
 

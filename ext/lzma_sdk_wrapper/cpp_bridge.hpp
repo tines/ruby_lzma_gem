@@ -12,15 +12,6 @@
 #include <vector>
 #include <memory>
 
-/* 7-Zip SDK includes */
-extern "C" {
-    #include "lzma_sdk/C/7z.h"
-    #include "lzma_sdk/C/7zAlloc.h"
-    #include "lzma_sdk/C/7zCrc.h"
-    #include "lzma_sdk/C/7zFile.h"
-    #include "lzma_sdk/C/7zVersion.h"
-}
-
 namespace LzmaSdkWrapper {
 
 /**
@@ -72,6 +63,7 @@ private:
     std::string errorMessage;
     std::string password;
     std::string archivePath;  // Store archive path for C++ API reopening
+    int archiveFormat;  // Store format for GUID initialization (SZ_FORMAT_*)
     SzProgressCallback progressCallback;
     void* progressUserData;
 
@@ -80,9 +72,9 @@ private:
     std::vector<uint8_t> memoryBuffer;  // Owned copy of archive data
     void* memoryArchive;  // IInArchive pointer for memory-based archives
 
-    // File-based C++ API cache (for password-protected archives)
-    void* fileArchive;  // IInArchive pointer cached for file-based password extraction
-    void* fileStream;   // IInStream pointer cached for file-based password extraction
+    // File-based C++ API cache
+    void* fileArchive;  // IInArchive pointer for file-based archives
+    void* fileStream;   // IInStream pointer for file-based archives
 };
 
 /**

@@ -9,7 +9,7 @@
 #include <stdexcept>
 #include <sys/stat.h>
 
-// C++ API includes for password support
+// C++ API includes
 #include "lzma_sdk/CPP/7zip/Archive/IArchive.h"
 #include "lzma_sdk/CPP/7zip/Common/FileStreams.h"
 #include "lzma_sdk/CPP/7zip/Common/StreamObjects.h"
@@ -19,10 +19,11 @@
 // 7z handler creation function (from ArchiveExports.cpp)
 STDAPI CreateArchiver(const GUID *clsid, const GUID *iid, void **outObject);
 
-// Helper function to initialize 7z format GUID
-// GUID format: {23170F69-40C1-278A-1000-000110070000}
-// The last byte before the two zeros (0x07) identifies the 7z format
-static void Init7zFormatGUID(GUID* guid) {
+// Helper function to initialize a format GUID based on format constant
+// GUID format: {23170F69-40C1-278A-1000-0001100X0000}
+// The byte at Data4[5] identifies the format:
+//   0x07 = 7z, 0x01 = Zip, 0xEE = Tar
+static void InitFormatGUID(GUID* guid, int format) {
     memset(guid, 0, sizeof(GUID));
     guid->Data1 = 0x23170F69;
     guid->Data2 = 0x40C1;
@@ -32,9 +33,22 @@ static void Init7zFormatGUID(GUID* guid) {
     guid->Data4[2] = 0x00;
     guid->Data4[3] = 0x01;
     guid->Data4[4] = 0x10;
-    guid->Data4[5] = 0x07;  // Format ID: 7z
     guid->Data4[6] = 0x00;
     guid->Data4[7] = 0x00;
+
+    // Map our format constants to SDK format IDs
+    switch (format) {
+        case SZ_FORMAT_ZIP:
+            guid->Data4[5] = 0x01;  // kId_Zip
+            break;
+        case SZ_FORMAT_TAR:
+            guid->Data4[5] = 0xEE;  // kId_Tar
+            break;
+        case SZ_FORMAT_7Z:
+        default:
+            guid->Data4[5] = 0x07;  // kId_7z
+            break;
+    }
 }
 
 // Memory-based input stream for reading archives from memory buffers
@@ -133,37 +147,14 @@ namespace LzmaSdkWrapper {
 
 class ArchiveReader::Impl {
 public:
-    CFileInStream archiveStream;
-    CLookToRead2 lookStream;
-    CSzArEx db;
-    ISzAlloc allocImp;
-    ISzAlloc allocTempImp;
     bool isOpen;
-    UInt16 *tempBuf;
-    size_t tempBufSize;
 
-    static const size_t kInputBufSize = (1 << 18); // 256KB buffer
-
-    Impl() : isOpen(false), tempBuf(nullptr), tempBufSize(0) {
-        allocImp.Alloc = SzAlloc;
-        allocImp.Free = SzFree;
-        allocTempImp.Alloc = SzAllocTemp;
-        allocTempImp.Free = SzFreeTemp;
-        lookStream.buf = nullptr;
-    }
-
-    ~Impl() {
-        if (tempBuf) {
-            ISzAlloc_Free(&allocImp, tempBuf);
-        }
-        if (lookStream.buf) {
-            ISzAlloc_Free(&allocImp, lookStream.buf);
-        }
-    }
+    Impl() : isOpen(false) {}
 };
 
 ArchiveReader::ArchiveReader()
     : pImpl(new Impl())  // Use new directly for C++11 compatibility
+    , archiveFormat(SZ_FORMAT_7Z)
     , progressCallback(nullptr)
     , progressUserData(nullptr)
     , isMemoryBased(false)
@@ -178,96 +169,58 @@ ArchiveReader::~ArchiveReader() {
 
 int ArchiveReader::open(const char* path, int format) {
     try {
-        // Store archive path for C++ API use
+        // Store archive path and format for later use
         archivePath = path;
+        archiveFormat = format;
 
-        // If password is set, use C++ API from the start for better performance
+        // Initialize format GUID based on the requested format
+        GUID CLSID_Format;
+        InitFormatGUID(&CLSID_Format, format);
+
+        // Create archive handler for the requested format
+        CMyComPtr<IInArchive> archive;
+        HRESULT hr = CreateArchiver(&CLSID_Format, &IID_IInArchive, (void**)&archive);
+        if (hr != S_OK || !archive) {
+            errorMessage = "Failed to create archive handler for format";
+            return SZW_ERROR_FAIL;
+        }
+
+        // Open file stream
+        CInFileStream *fileSpec = new CInFileStream;
+        CMyComPtr<IInStream> file = fileSpec;
+
+        FString archivePathFS = us2fs(GetUnicodeString(path));
+        if (!fileSpec->Open(archivePathFS)) {
+            errorMessage = "Failed to open archive file";
+            return SZW_ERROR_OPEN_FAILED;
+        }
+
+        // Create open callback with password
+        CArchiveOpenCallback *openCallbackSpec = new CArchiveOpenCallback;
+        CMyComPtr<IArchiveOpenCallback> openCallback(openCallbackSpec);
         if (!password.empty()) {
-
-            // Initialize 7z format GUID
-            GUID CLSID_Format7z;
-            Init7zFormatGUID(&CLSID_Format7z);
-
-            // Create 7z archive handler
-            CMyComPtr<IInArchive> archive;
-            HRESULT hr = CreateArchiver(&CLSID_Format7z, &IID_IInArchive, (void**)&archive);
-            if (hr != S_OK || !archive) {
-                errorMessage = "Failed to create 7z handler";
-                return SZW_ERROR_FAIL;
-            }
-
-            // Open file stream
-            CInFileStream *fileSpec = new CInFileStream;
-            CMyComPtr<IInStream> file = fileSpec;
-
-            FString archivePathFS = us2fs(GetUnicodeString(path));
-            if (!fileSpec->Open(archivePathFS)) {
-                errorMessage = "Failed to open archive file";
-                return SZW_ERROR_OPEN_FAILED;
-            }
-
-            // Create open callback with password
-            CArchiveOpenCallback *openCallbackSpec = new CArchiveOpenCallback;
-            CMyComPtr<IArchiveOpenCallback> openCallback(openCallbackSpec);
             openCallbackSpec->SetPassword(password.c_str());
-
-            // Open archive
-            const UInt64 scanSize = 1 << 23;
-            hr = archive->Open(file, &scanSize, openCallback);
-            if (hr != S_OK) {
-                char errBuf[256];
-                snprintf(errBuf, sizeof(errBuf), "Failed to open password-protected archive (HRESULT: 0x%08X)", (unsigned int)hr);
-                errorMessage = errBuf;
-                return SZW_ERROR_OPEN_FAILED;
-            }
-
-            // Cache the archive and stream for extraction
-            archive->AddRef();
-            fileArchive = archive.Detach();
-
-            file->AddRef();
-            fileStream = file.Detach();
-
-            // Also initialize the C API db for entry count queries
-            // (We'll get entry count from C++ API instead)
-            pImpl->isOpen = true;
-
-            return SZW_OK;
         }
 
-        // For unencrypted archives, use fast C API
-
-        if (InFile_Open(&pImpl->archiveStream.file, path)) {
-            errorMessage = "Failed to open file";
+        // Open archive
+        const UInt64 scanSize = 1 << 23;
+        hr = archive->Open(file, &scanSize, openCallback);
+        if (hr != S_OK) {
+            char errBuf[256];
+            snprintf(errBuf, sizeof(errBuf), "Failed to open archive (HRESULT: 0x%08X)", (unsigned int)hr);
+            errorMessage = errBuf;
             return SZW_ERROR_OPEN_FAILED;
         }
 
-        FileInStream_CreateVTable(&pImpl->archiveStream);
-        LookToRead2_CreateVTable(&pImpl->lookStream, False);
+        // Cache the archive and stream for extraction
+        archive->AddRef();
+        fileArchive = archive.Detach();
 
-        // Allocate buffer for LookToRead2
-        pImpl->lookStream.buf = (Byte *)ISzAlloc_Alloc(&pImpl->allocImp, pImpl->kInputBufSize);
-        if (!pImpl->lookStream.buf) {
-            File_Close(&pImpl->archiveStream.file);
-            errorMessage = "Failed to allocate read buffer";
-            return SZW_ERROR_OUTOFMEMORY;
-        }
-
-        pImpl->lookStream.bufSize = pImpl->kInputBufSize;
-        pImpl->lookStream.realStream = &pImpl->archiveStream.vt;
-        LookToRead2_INIT(&pImpl->lookStream);
-
-        CrcGenerateTable();
-        SzArEx_Init(&pImpl->db);
-
-        SRes res = SzArEx_Open(&pImpl->db, &pImpl->lookStream.vt, &pImpl->allocImp, &pImpl->allocTempImp);
-        if (res != SZ_OK) {
-            File_Close(&pImpl->archiveStream.file);
-            errorMessage = "Failed to open archive";
-            return SZW_ERROR_OPEN_FAILED;
-        }
+        file->AddRef();
+        fileStream = file.Detach();
 
         pImpl->isOpen = true;
+
         return SZW_OK;
 
     } catch (const std::exception& e) {
@@ -283,18 +236,21 @@ int ArchiveReader::openFromMemory(const uint8_t* data, size_t size, int format) 
             return SZW_ERROR_INVALIDARG;
         }
 
+        // Store the format for later use
+        archiveFormat = format;
+
         // Copy buffer data (we need to own it for the lifetime of the reader)
         memoryBuffer.assign(data, data + size);
 
-        // Initialize 7z format GUID
-        GUID CLSID_Format7z;
-        Init7zFormatGUID(&CLSID_Format7z);
+        // Initialize format GUID based on the requested format
+        GUID CLSID_Format;
+        InitFormatGUID(&CLSID_Format, format);
 
-        // Create 7z archive handler
+        // Create archive handler for the requested format
         CMyComPtr<IInArchive> archive;
-        HRESULT hr = CreateArchiver(&CLSID_Format7z, &IID_IInArchive, (void**)&archive);
+        HRESULT hr = CreateArchiver(&CLSID_Format, &IID_IInArchive, (void**)&archive);
         if (hr != S_OK || !archive) {
-            errorMessage = "Failed to create 7z handler";
+            errorMessage = "Failed to create archive handler for format";
             return SZW_ERROR_FAIL;
         }
 
@@ -337,7 +293,7 @@ int ArchiveReader::openFromMemory(const uint8_t* data, size_t size, int format) 
 
 void ArchiveReader::close() {
     if (pImpl->isOpen) {
-        // Release cached C++ file archive if present
+        // Release file-based archive
         if (fileArchive) {
             static_cast<IInArchive*>(fileArchive)->Release();
             fileArchive = nullptr;
@@ -347,19 +303,16 @@ void ArchiveReader::close() {
             fileStream = nullptr;
         }
 
+        // Release memory-based archive
         if (isMemoryBased) {
-            // Release memory-based archive
             if (memoryArchive) {
                 static_cast<IInArchive*>(memoryArchive)->Release();
                 memoryArchive = nullptr;
             }
             memoryBuffer.clear();
             isMemoryBased = false;
-        } else if (!fileArchive) {
-            // Release file-based C API archive (only if we didn't use C++ API)
-            SzArEx_Free(&pImpl->db, &pImpl->allocImp);
-            File_Close(&pImpl->archiveStream.file);
         }
+
         pImpl->isOpen = false;
     }
 }
@@ -369,22 +322,20 @@ uint32_t ArchiveReader::getEntryCount() {
         return 0;
     }
 
-    // Check if using C++ API (memory-based or file-based with password)
     IInArchive* archive = nullptr;
     if (isMemoryBased) {
         archive = static_cast<IInArchive*>(memoryArchive);
-    } else if (fileArchive) {
+    } else {
         archive = static_cast<IInArchive*>(fileArchive);
     }
 
-    if (archive) {
-        UInt32 numItems = 0;
-        archive->GetNumberOfItems(&numItems);
-        return numItems;
+    if (!archive) {
+        return 0;
     }
 
-    // Fall back to C API
-    return pImpl->db.NumFiles;
+    UInt32 numItems = 0;
+    archive->GetNumberOfItems(&numItems);
+    return numItems;
 }
 
 int ArchiveReader::getEntryInfo(uint32_t index, SzEntryInfo* info) {
@@ -392,157 +343,82 @@ int ArchiveReader::getEntryInfo(uint32_t index, SzEntryInfo* info) {
         return SZW_ERROR_INVALIDARG;
     }
 
-    // Check if using C++ API (memory-based or file-based with password)
     IInArchive* archive = nullptr;
     if (isMemoryBased) {
         archive = static_cast<IInArchive*>(memoryArchive);
-    } else if (fileArchive) {
+    } else {
         archive = static_cast<IInArchive*>(fileArchive);
     }
 
-    if (archive) {
-        // Handle archives using C++ COM API
-
-        UInt32 numItems = 0;
-        archive->GetNumberOfItems(&numItems);
-        if (index >= numItems) {
-            return SZW_ERROR_INVALIDARG;
-        }
-
-        try {
-            // Get file path
-            NWindows::NCOM::CPropVariant prop;
-
-            HRESULT hr = archive->GetProperty(index, kpidPath, &prop);
-            if (hr == S_OK && prop.vt == VT_BSTR) {
-                // Convert BSTR (UTF-16) to UTF-8
-                const wchar_t* wstr = prop.bstrVal;
-                size_t maxLen = sizeof(info->name) - 1;
-                for (size_t i = 0; i < maxLen && wstr[i] != 0; i++) {
-                    if (wstr[i] < 128) {
-                        info->name[i] = (char)wstr[i];
-                    } else {
-                        info->name[i] = '?';
-                    }
-                    info->name[i + 1] = '\0';
-                }
-            } else {
-                info->name[0] = '\0';
-            }
-
-            // Get uncompressed size
-            hr = archive->GetProperty(index, kpidSize, &prop);
-            if (hr == S_OK && prop.vt == VT_UI8) {
-                info->size = prop.uhVal.QuadPart;
-            } else {
-                info->size = 0;
-            }
-
-            // Get compressed size
-            hr = archive->GetProperty(index, kpidPackSize, &prop);
-            if (hr == S_OK && prop.vt == VT_UI8) {
-                info->compressed_size = prop.uhVal.QuadPart;
-            } else {
-                info->compressed_size = 0;
-            }
-
-            // Get directory flag
-            hr = archive->GetProperty(index, kpidIsDir, &prop);
-            if (hr == S_OK && prop.vt == VT_BOOL) {
-                info->is_directory = (prop.boolVal != VARIANT_FALSE);
-            } else {
-                info->is_directory = false;
-            }
-
-            // Get CRC
-            hr = archive->GetProperty(index, kpidCRC, &prop);
-            if (hr == S_OK && prop.vt == VT_UI4) {
-                info->crc = prop.ulVal;
-            } else {
-                info->crc = 0;
-            }
-
-            // Get modified time
-            hr = archive->GetProperty(index, kpidMTime, &prop);
-            if (hr == S_OK && prop.vt == VT_FILETIME) {
-                // Convert FILETIME to Unix timestamp
-                UInt64 winTime = ((UInt64)prop.filetime.dwHighDateTime << 32) | prop.filetime.dwLowDateTime;
-                if (winTime > 116444736000000000ULL) {
-                    info->modified_time = (winTime - 116444736000000000ULL) / 10000000ULL;
-                } else {
-                    info->modified_time = 0;
-                }
-            } else {
-                info->modified_time = 0;
-            }
-
-            // Get attributes
-            hr = archive->GetProperty(index, kpidAttrib, &prop);
-            if (hr == S_OK && prop.vt == VT_UI4) {
-                info->attributes = prop.ulVal;
-            } else {
-                info->attributes = 0;
-            }
-
-            return SZW_OK;
-
-        } catch (const std::exception& e) {
-            errorMessage = e.what();
-            return SZW_ERROR_FAIL;
-        }
+    if (!archive) {
+        errorMessage = "No archive open";
+        return SZW_ERROR_FAIL;
     }
 
-    // Handle file-based archives using C API
-    if (index >= pImpl->db.NumFiles) {
+    UInt32 numItems = 0;
+    archive->GetNumberOfItems(&numItems);
+    if (index >= numItems) {
         return SZW_ERROR_INVALIDARG;
     }
 
     try {
-        /* Get filename */
-        size_t len = SzArEx_GetFileNameUtf16(&pImpl->db, index, nullptr);
-        if (len > pImpl->tempBufSize) {
-            ISzAlloc_Free(&pImpl->allocImp, pImpl->tempBuf);
-            pImpl->tempBufSize = len;
-            pImpl->tempBuf = (UInt16 *)ISzAlloc_Alloc(&pImpl->allocImp, pImpl->tempBufSize * sizeof(UInt16));
-            if (!pImpl->tempBuf) {
-                pImpl->tempBufSize = 0;
-                return SZW_ERROR_OUTOFMEMORY;
+        // Get file path
+        NWindows::NCOM::CPropVariant prop;
+
+        HRESULT hr = archive->GetProperty(index, kpidPath, &prop);
+        if (hr == S_OK && prop.vt == VT_BSTR) {
+            // Convert BSTR (UTF-16) to UTF-8
+            const wchar_t* wstr = prop.bstrVal;
+            size_t maxLen = sizeof(info->name) - 1;
+            for (size_t i = 0; i < maxLen && wstr[i] != 0; i++) {
+                if (wstr[i] < 128) {
+                    info->name[i] = (char)wstr[i];
+                } else {
+                    info->name[i] = '?';
+                }
+                info->name[i + 1] = '\0';
             }
+        } else {
+            info->name[0] = '\0';
         }
 
-        SzArEx_GetFileNameUtf16(&pImpl->db, index, pImpl->tempBuf);
-
-        /* Convert UTF-16 to UTF-8 (simplified) */
-        char* namePtr = info->name;
-        size_t maxLen = sizeof(info->name) - 1;
-        for (size_t i = 0; i < len && i < maxLen; i++) {
-            if (pImpl->tempBuf[i] < 128) {
-                *namePtr++ = (char)pImpl->tempBuf[i];
-            } else {
-                *namePtr++ = '?';  /* Simplified: replace non-ASCII with ? */
-            }
+        // Get uncompressed size
+        hr = archive->GetProperty(index, kpidSize, &prop);
+        if (hr == S_OK && prop.vt == VT_UI8) {
+            info->size = prop.uhVal.QuadPart;
+        } else {
+            info->size = 0;
         }
-        *namePtr = '\0';
 
-        /* Fill in other fields from CSzArEx structure */
-        info->size = SzArEx_GetFileSize(&pImpl->db, index);
-        info->compressed_size = 0;  /* Not easily available in 7z SDK */
-        info->is_directory = SzArEx_IsDir(&pImpl->db, index) ? true : false;
+        // Get compressed size
+        hr = archive->GetProperty(index, kpidPackSize, &prop);
+        if (hr == S_OK && prop.vt == VT_UI8) {
+            info->compressed_size = prop.uhVal.QuadPart;
+        } else {
+            info->compressed_size = 0;
+        }
 
-        /* Get CRC if available */
-        if (SzBitWithVals_Check(&pImpl->db.CRCs, index)) {
-            info->crc = pImpl->db.CRCs.Vals[index];
+        // Get directory flag
+        hr = archive->GetProperty(index, kpidIsDir, &prop);
+        if (hr == S_OK && prop.vt == VT_BOOL) {
+            info->is_directory = (prop.boolVal != VARIANT_FALSE);
+        } else {
+            info->is_directory = false;
+        }
+
+        // Get CRC
+        hr = archive->GetProperty(index, kpidCRC, &prop);
+        if (hr == S_OK && prop.vt == VT_UI4) {
+            info->crc = prop.ulVal;
         } else {
             info->crc = 0;
         }
 
-        /* Get modified time if available */
-        if (SzBitWithVals_Check(&pImpl->db.MTime, index)) {
-            CNtfsFileTime *ft = &pImpl->db.MTime.Vals[index];
-            /* Convert Windows FILETIME to Unix timestamp (simplified) */
-            UInt64 winTime = ((UInt64)ft->High << 32) | ft->Low;
-            /* Windows epoch is 1601-01-01, Unix epoch is 1970-01-01 */
-            /* 116444736000000000 is the difference in 100ns intervals */
+        // Get modified time
+        hr = archive->GetProperty(index, kpidMTime, &prop);
+        if (hr == S_OK && prop.vt == VT_FILETIME) {
+            // Convert FILETIME to Unix timestamp
+            UInt64 winTime = ((UInt64)prop.filetime.dwHighDateTime << 32) | prop.filetime.dwLowDateTime;
             if (winTime > 116444736000000000ULL) {
                 info->modified_time = (winTime - 116444736000000000ULL) / 10000000ULL;
             } else {
@@ -552,9 +428,10 @@ int ArchiveReader::getEntryInfo(uint32_t index, SzEntryInfo* info) {
             info->modified_time = 0;
         }
 
-        /* Get attributes if available */
-        if (SzBitWithVals_Check(&pImpl->db.Attribs, index)) {
-            info->attributes = pImpl->db.Attribs.Vals[index];
+        // Get attributes
+        hr = archive->GetProperty(index, kpidAttrib, &prop);
+        if (hr == S_OK && prop.vt == VT_UI4) {
+            info->attributes = prop.ulVal;
         } else {
             info->attributes = 0;
         }
@@ -567,66 +444,21 @@ int ArchiveReader::getEntryInfo(uint32_t index, SzEntryInfo* info) {
     }
 }
 
-// Helper function for C++ API extraction (with password support)
+// Helper function for C++ API extraction to file
 int ArchiveReader::extractToFile_CPP(uint32_t index, const char* output_path) {
     try {
         CMyComPtr<IInArchive> archive;
 
-        // Check if we already have a cached archive open
+        // Get the cached archive (file-based or memory-based)
         if (fileArchive) {
-            // Reuse the cached archive
             archive = static_cast<IInArchive*>(fileArchive);
-            archive->AddRef();  // AddRef since CMyComPtr will Release on destruction
-        } else {
-            // First time opening - create and cache the archive
-            // Initialize 7z format GUID
-            GUID CLSID_Format7z;
-            Init7zFormatGUID(&CLSID_Format7z);
-
-            // Create 7z archive handler
-            HRESULT hr = CreateArchiver(&CLSID_Format7z, &IID_IInArchive, (void**)&archive);
-            if (hr != S_OK || !archive) {
-                errorMessage = "Failed to create 7z handler";
-                return SZW_ERROR_FAIL;
-            }
-
-            // Open file stream
-            CInFileStream *fileSpec = new CInFileStream;
-            CMyComPtr<IInStream> file = fileSpec;
-
-            // Convert path to FString (platform-appropriate string type)
-            FString archivePathFS = us2fs(GetUnicodeString(archivePath.c_str()));
-            if (!fileSpec->Open(archivePathFS)) {
-                errorMessage = "Failed to open archive file";
-                return SZW_ERROR_OPEN_FAILED;
-            }
-
-            // Create open callback with password
-            CArchiveOpenCallback *openCallbackSpec = new CArchiveOpenCallback;
-            CMyComPtr<IArchiveOpenCallback> openCallback(openCallbackSpec);
-
-            if (!password.empty()) {
-                openCallbackSpec->SetPassword(password.c_str());
-            }
-
-            // Open archive
-            const UInt64 scanSize = 1 << 23;
-            hr = archive->Open(file, &scanSize, openCallback);
-            if (hr != S_OK) {
-                char errBuf[256];
-                snprintf(errBuf, sizeof(errBuf), "Failed to open archive with C++ API (HRESULT: 0x%08X)", (unsigned int)hr);
-                errorMessage = errBuf;
-                return SZW_ERROR_OPEN_FAILED;
-            }
-
-            // Cache the opened archive and stream for reuse
             archive->AddRef();
-            fileArchive = archive.Detach();
-            archive = static_cast<IInArchive*>(fileArchive);
-            archive->AddRef();  // AddRef for the local CMyComPtr
-
-            file->AddRef();
-            fileStream = file.Detach();
+        } else if (isMemoryBased && memoryArchive) {
+            archive = static_cast<IInArchive*>(memoryArchive);
+            archive->AddRef();
+        } else {
+            errorMessage = "No archive open";
+            return SZW_ERROR_FAIL;
         }
 
         // Create extract callback with password
@@ -672,86 +504,12 @@ int ArchiveReader::extractToFile(uint32_t index, const char* output_path) {
         return SZW_ERROR_FAIL;
     }
 
-    if (index >= pImpl->db.NumFiles) {
-        errorMessage = "Index out of range";
-        return SZW_ERROR_INVALIDARG;
-    }
-
     if (!output_path) {
         errorMessage = "Output path is null";
         return SZW_ERROR_INVALIDARG;
     }
 
-    // Check if this is a directory
-    if (SzArEx_IsDir(&pImpl->db, index)) {
-        errorMessage = "Cannot extract directory to file";
-        return SZW_ERROR_INVALIDARG;
-    }
-
-    // If we have a cached C++ archive (password-protected), use it directly
-    if (fileArchive) {
-        return extractToFile_CPP(index, output_path);
-    }
-
-    // Otherwise use C API for unencrypted files
-    try {
-        UInt32 blockIndex = 0xFFFFFFFF; // Start with invalid block index
-        Byte *outBuffer = nullptr;
-        size_t outBufferSize = 0;
-        size_t offset = 0;
-        size_t outSizeProcessed = 0;
-
-        // Extract file to memory buffer
-        SRes res = SzArEx_Extract(&pImpl->db, &pImpl->lookStream.vt, index,
-                                  &blockIndex, &outBuffer, &outBufferSize,
-                                  &offset, &outSizeProcessed,
-                                  &pImpl->allocImp, &pImpl->allocTempImp);
-
-        if (res != SZ_OK) {
-            errorMessage = "Failed to extract file";
-            if (outBuffer) {
-                ISzAlloc_Free(&pImpl->allocImp, outBuffer);
-            }
-            return SZW_ERROR_EXTRACT_FAILED;
-        }
-
-        // Open output file
-        CSzFile outFile;
-        WRes wres = OutFile_Open(&outFile, output_path);
-        if (wres != 0) {
-            errorMessage = "Failed to create output file";
-            if (outBuffer) {
-                ISzAlloc_Free(&pImpl->allocImp, outBuffer);
-            }
-            return SZW_ERROR_WRITE_FAILED;
-        }
-
-        // Write extracted data to file
-        size_t processedSize = outSizeProcessed;
-        wres = File_Write(&outFile, outBuffer + offset, &processedSize);
-
-        // Free the buffer
-        ISzAlloc_Free(&pImpl->allocImp, outBuffer);
-
-        if (wres != 0 || processedSize != outSizeProcessed) {
-            File_Close(&outFile);
-            errorMessage = "Failed to write output file";
-            return SZW_ERROR_WRITE_FAILED;
-        }
-
-        // Close the output file
-        wres = File_Close(&outFile);
-        if (wres != 0) {
-            errorMessage = "Failed to close output file";
-            return SZW_ERROR_WRITE_FAILED;
-        }
-
-        return SZW_OK;
-
-    } catch (const std::exception& e) {
-        errorMessage = e.what();
-        return SZW_ERROR_FAIL;
-    }
+    return extractToFile_CPP(index, output_path);
 }
 
 int ArchiveReader::extractToMemory(uint32_t index, uint8_t** buffer, size_t* size) {
@@ -761,56 +519,18 @@ int ArchiveReader::extractToMemory(uint32_t index, uint8_t** buffer, size_t* siz
     }
 
     try {
-        // Initialize 7z format GUID
-        GUID CLSID_Format7z;
-        Init7zFormatGUID(&CLSID_Format7z);
-
-        // Create 7z archive handler
         CMyComPtr<IInArchive> archive;
-        HRESULT hr = CreateArchiver(&CLSID_Format7z, &IID_IInArchive, (void**)&archive);
-        if (hr != S_OK || !archive) {
-            errorMessage = "Failed to create 7z handler";
-            return SZW_ERROR_FAIL;
-        }
 
-        // Open stream (file or memory)
-        CMyComPtr<IInStream> stream;
-
-        if (isMemoryBased) {
-            // Create memory stream from stored buffer
-            CMemoryInStream *memStreamSpec = new CMemoryInStream(memoryBuffer.data(), memoryBuffer.size());
-            stream = memStreamSpec;
+        // Get the cached archive (file-based or memory-based)
+        if (fileArchive) {
+            archive = static_cast<IInArchive*>(fileArchive);
+            archive->AddRef();
+        } else if (isMemoryBased && memoryArchive) {
+            archive = static_cast<IInArchive*>(memoryArchive);
+            archive->AddRef();
         } else {
-            // Open file stream
-            if (index >= pImpl->db.NumFiles) {
-                errorMessage = "Index out of range";
-                return SZW_ERROR_INVALIDARG;
-            }
-
-            CInFileStream *fileSpec = new CInFileStream;
-            stream = fileSpec;
-
-            FString archivePathFS = us2fs(GetUnicodeString(archivePath.c_str()));
-            if (!fileSpec->Open(archivePathFS)) {
-                errorMessage = "Failed to open archive file";
-                return SZW_ERROR_OPEN_FAILED;
-            }
-        }
-
-        // Create open callback with password
-        CArchiveOpenCallback *openCallbackSpec = new CArchiveOpenCallback;
-        CMyComPtr<IArchiveOpenCallback> openCallback(openCallbackSpec);
-
-        if (!password.empty()) {
-            openCallbackSpec->SetPassword(password.c_str());
-        }
-
-        // Open archive
-        const UInt64 scanSize = 1 << 23;
-        hr = archive->Open(stream, &scanSize, openCallback);
-        if (hr != S_OK) {
-            errorMessage = "Failed to open archive";
-            return SZW_ERROR_OPEN_FAILED;
+            errorMessage = "No archive open";
+            return SZW_ERROR_FAIL;
         }
 
         // Create memory output stream
@@ -829,7 +549,7 @@ int ArchiveReader::extractToMemory(uint32_t index, uint8_t** buffer, size_t* siz
 
         // Extract the single file
         const UInt32 indices[1] = { index };
-        hr = archive->Extract(indices, 1, 0, extractCallback);
+        HRESULT hr = archive->Extract(indices, 1, 0, extractCallback);
 
         if (hr != S_OK) {
             errorMessage = "Extraction failed";
@@ -870,15 +590,15 @@ int ArchiveReader::verify() {
     }
 
     try {
-        // Initialize 7z format GUID
-        GUID CLSID_Format7z;
-        Init7zFormatGUID(&CLSID_Format7z);
+        // Initialize format GUID using stored format
+        GUID CLSID_Format;
+        InitFormatGUID(&CLSID_Format, archiveFormat);
 
-        // Create 7z archive handler
+        // Create archive handler for the stored format
         CMyComPtr<IInArchive> archive;
-        HRESULT hr = CreateArchiver(&CLSID_Format7z, &IID_IInArchive, (void**)&archive);
+        HRESULT hr = CreateArchiver(&CLSID_Format, &IID_IInArchive, (void**)&archive);
         if (hr != S_OK || !archive) {
-            errorMessage = "Failed to create 7z handler";
+            errorMessage = "Failed to create archive handler";
             return SZW_ERROR_FAIL;
         }
 
@@ -950,55 +670,6 @@ int ArchiveReader::verify() {
 int ArchiveReader::setPassword(const char* pwd) {
     if (pwd) {
         password = pwd;
-
-        // If this is a file-based archive (not memory-based) and we don't have a C++ archive yet,
-        // open it now with the C++ API for better extraction performance
-        if (!isMemoryBased && !fileArchive && !archivePath.empty()) {
-
-            // Initialize 7z format GUID
-            GUID CLSID_Format7z;
-            Init7zFormatGUID(&CLSID_Format7z);
-
-            // Create 7z archive handler
-            CMyComPtr<IInArchive> archive;
-            HRESULT hr = CreateArchiver(&CLSID_Format7z, &IID_IInArchive, (void**)&archive);
-            if (hr != S_OK || !archive) {
-                errorMessage = "Failed to create 7z handler";
-                return SZW_ERROR_FAIL;
-            }
-
-            // Open file stream
-            CInFileStream *fileSpec = new CInFileStream;
-            CMyComPtr<IInStream> file = fileSpec;
-
-            FString archivePathFS = us2fs(GetUnicodeString(archivePath.c_str()));
-            if (!fileSpec->Open(archivePathFS)) {
-                errorMessage = "Failed to open archive file";
-                return SZW_ERROR_OPEN_FAILED;
-            }
-
-            // Create open callback with password
-            CArchiveOpenCallback *openCallbackSpec = new CArchiveOpenCallback;
-            CMyComPtr<IArchiveOpenCallback> openCallback(openCallbackSpec);
-            openCallbackSpec->SetPassword(password.c_str());
-
-            // Open archive
-            const UInt64 scanSize = 1 << 23;
-            hr = archive->Open(file, &scanSize, openCallback);
-            if (hr != S_OK) {
-                char errBuf[256];
-                snprintf(errBuf, sizeof(errBuf), "Failed to open password-protected archive (HRESULT: 0x%08X)", (unsigned int)hr);
-                errorMessage = errBuf;
-                return SZW_ERROR_OPEN_FAILED;
-            }
-
-            // Cache the archive and stream for extraction
-            archive->AddRef();
-            fileArchive = archive.Detach();
-
-            file->AddRef();
-            fileStream = file.Detach();
-        }
     } else {
         password.clear();
     }
@@ -1066,15 +737,15 @@ int ArchiveWriter::finalize() {
     }
 
     try {
-        // Initialize 7z format GUID using shared definition
-        GUID CLSID_Format7z;
-        Init7zFormatGUID(&CLSID_Format7z);
+        // Initialize format GUID using the stored format
+        GUID CLSID_Format;
+        InitFormatGUID(&CLSID_Format, pImpl->format);
 
-        // Create output archive handler
+        // Create output archive handler for the requested format
         CMyComPtr<IOutArchive> outArchive;
-        HRESULT hr = CreateArchiver(&CLSID_Format7z, &IID_IOutArchive, (void**)&outArchive);
+        HRESULT hr = CreateArchiver(&CLSID_Format, &IID_IOutArchive, (void**)&outArchive);
         if (hr != S_OK || !outArchive) {
-            errorMessage = "Failed to create 7z output handler";
+            errorMessage = "Failed to create output archive handler";
             pImpl->isOpen = false;
             return SZW_ERROR_FAIL;
         }
