@@ -33,12 +33,12 @@ RSpec.describe RubyLzma::Format do
       expect(described_class.supported?(RubyLzma::FFI::Constants::SZ_FORMAT_7Z)).to be true
     end
 
-    it "returns false for ZIP format (requires C++ API)" do
-      expect(described_class.supported?(RubyLzma::FFI::Constants::SZ_FORMAT_ZIP)).to be false
+    it "returns true for ZIP format" do
+      expect(described_class.supported?(RubyLzma::FFI::Constants::SZ_FORMAT_ZIP)).to be true
     end
 
-    it "returns false for TAR format (requires C++ API)" do
-      expect(described_class.supported?(RubyLzma::FFI::Constants::SZ_FORMAT_TAR)).to be false
+    it "returns true for TAR format" do
+      expect(described_class.supported?(RubyLzma::FFI::Constants::SZ_FORMAT_TAR)).to be true
     end
   end
 

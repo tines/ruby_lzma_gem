@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "fileutils"
+require "stringio"
 
 module RubyLzma
   module Archive
@@ -16,8 +17,10 @@ module RubyLzma
       # Default maximum total extraction size (10 GB)
       DEFAULT_MAX_TOTAL_SIZE = 10 * 1024 * 1024 * 1024
 
-      # Default maximum compression ratio (1000:1 - typical archive bombs exceed this)
-      DEFAULT_MAX_COMPRESSION_RATIO = 1000
+      # Default maximum compression ratio (10000:1)
+      # LZMA2 legitimately achieves high ratios on repetitive data (1000-5000:1),
+      # while actual archive bombs typically exceed 1,000,000:1.
+      DEFAULT_MAX_COMPRESSION_RATIO = 10_000
 
       # Default maximum size for entries with unknown compression ratio (10 MB)
       # In solid archives, individual compressed_size may be 0 (unknown)
