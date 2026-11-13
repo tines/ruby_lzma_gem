@@ -29,7 +29,7 @@ when :macos
 
 when :linux
   $CXXFLAGS << " -std=c++11"
-  $CFLAGS << " -std=c11"
+  $CFLAGS << " -std=c11 -D_POSIX_C_SOURCE=200809L"
   $LDFLAGS << " -lstdc++"
 
 when :windows
