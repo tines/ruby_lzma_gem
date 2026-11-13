@@ -1078,26 +1078,24 @@ static int MY_lstat(CFSTR path, struct stat *st, bool followLink)
 }
 
 
-static const char *Get_Name_from_Path(CFSTR path) throw()
+/* if last character is path separator,
+   function returns name before last separator */
+static CFSTR Get_Name_from_Path(CFSTR path Z7_lifetimebound) throw()
 {
-  size_t len = strlen(path);
-  if (len == 0)
-    return path;
-  const char *p = path + len - 1;
-  {
-    if (p == path)
-      return path;
-    p--;
-  }
+  CFSTR name = path;
   for (;;)
   {
-    char c = *p;
+    const FChar c = *path++;
+    if (c == 0)
+      break;
     if (IS_PATH_SEPAR(c))
-      return p + 1;
-    if (p == path)
-      return path;
-    p--;
+    {
+      if (*path == 0)
+        break;
+      name = path;
+    }
   }
+  return name;
 }
 
 
@@ -1161,6 +1159,15 @@ void CFileInfoBase::SetFrom_stat(const struct stat &st)
   CTime = st.st_ctimespec;
   MTime = st.st_mtimespec;
   ATime = st.st_atimespec;
+
+  #elif defined(__QNXNTO__) && defined(__ARM__) && !defined(__aarch64__)
+  
+  // CTime = ST_CTIME(st);
+  // MTime = ST_MTIME(st);
+  // ATime = ST_ATIME(st);
+  CTime.tv_sec = st.st_ctime;  CTime.tv_nsec = 0;
+  MTime.tv_sec = st.st_mtime;  MTime.tv_nsec = 0;
+  ATime.tv_sec = st.st_atime;  ATime.tv_nsec = 0;
 
   #else
   // timespec_To_FILETIME(st.st_ctim, CTime, &CTime_ns100);
@@ -1312,7 +1319,7 @@ bool CDirEntry::IsDots() const throw()
   /* some systems (like CentOS 7.x on XFS) have (Type == DT_UNKNOWN)
      we can call fstatat() for that case, but we use only (Name) check here */
 
-#if !defined(_AIX) && !defined(__sun)
+#if !defined(_AIX) && !defined(__sun) && !defined(__QNXNTO__)
   if (Type != DT_DIR && Type != DT_UNKNOWN)
     return false;
 #endif
@@ -1352,7 +1359,7 @@ bool CEnumerator::NextAny(CDirEntry &fi, bool &found)
 
   fi.iNode = de->d_ino;
   
-#if !defined(_AIX) && !defined(__sun)
+#if !defined(_AIX) && !defined(__sun) && !defined(__QNXNTO__)
   fi.Type = de->d_type;
   /* some systems (like CentOS 7.x on XFS) have (Type == DT_UNKNOWN)
      we can set (Type) from fstatat() in that case.

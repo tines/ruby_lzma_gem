@@ -126,7 +126,7 @@ For detailed usage examples, see [EXAMPLES.md](EXAMPLES.md) which covers:
 
 ```ruby
 RubyLzma::VERSION          # => "0.1.0" (gem version)
-RubyLzma.sdk_version       # => "25.01" (LZMA SDK version)
+RubyLzma.sdk_version       # => "26.06" (LZMA SDK version)
 RubyLzma.sdk_info          # => Full SDK info with copyright
 ```
 

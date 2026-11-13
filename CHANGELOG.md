@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Update the vendored LZMA SDK from 25.01 to 26.06.
+
 ## [0.1.0] - 2025-12-10
 
 ### Added
@@ -29,7 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Uses LZMA SDK 25.01 (public domain, Igor Pavlov)
 - Three-layer architecture: C API, C++ Bridge, Ruby FFI
 - Thread-safe implementation (no global state)
-- Memory-safe (proper COM reference counting)
+- COM reference counting managed by the wrapper
 - Cross-platform support (macOS, Linux, Windows)
 
 ### Compatibility

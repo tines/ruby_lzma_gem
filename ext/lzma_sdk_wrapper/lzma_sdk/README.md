@@ -1,6 +1,6 @@
-# LZMA SDK 25.01
+# LZMA SDK 26.06
 
-This directory contains a vendored subset of the LZMA SDK version 25.01.
+This directory contains a vendored subset of the LZMA SDK version 26.06.
 
 ## License
 
@@ -12,8 +12,9 @@ From the official documentation:
 ## Source
 
 - Official website: https://www.7-zip.org/sdk.html
-- Download: https://www.7-zip.org/a/lzma2501.7z
-- Version: 25.01
+- Download: https://github.com/ip7z/7zip/releases/download/26.06/lzma2606.7z
+- SHA-256: `1d9da340870b12712e9068be178a4436fbad785486b62aed6e2aa88ea1e3bb65`
+- Version: 26.06
 
 ## Contents
 
