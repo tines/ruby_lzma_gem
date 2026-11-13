@@ -28,8 +28,9 @@ when :macos
   $LDFLAGS << " -stdlib=libc++"
 
 when :linux
-  $CXXFLAGS << " -std=c++11"
-  $CFLAGS << " -std=c11"
+  # The reduced SDK omits the UI code that implements large-page reporting.
+  $CXXFLAGS << " -std=c++11 -DZ7_NO_LARGE_PAGES"
+  $CFLAGS << " -std=c11 -D_POSIX_C_SOURCE=200809L -DZ7_NO_LARGE_PAGES"
   $LDFLAGS << " -lstdc++"
 
 when :windows

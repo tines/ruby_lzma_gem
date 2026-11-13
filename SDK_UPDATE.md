@@ -4,14 +4,14 @@ This document describes how to update the embedded LZMA SDK to a newer version.
 
 ## Current SDK Version
 
-The library currently uses LZMA SDK version **25.01** (August 3, 2025).
+The library currently uses LZMA SDK version **26.06** (November 6, 2026).
 
 You can check the current version programmatically:
 
 ```ruby
 require 'ruby_lzma'
 
-puts RubyLzma.sdk_version  # => "25.01"
+puts RubyLzma.sdk_version  # => "26.06"
 puts RubyLzma.sdk_info     # => Full version with copyright
 ```
 
@@ -27,7 +27,7 @@ puts RubyLzma.sdk_info     # => Full version with copyright
 ### 1. Download the Latest SDK
 
 1. Visit the official 7-Zip SDK download page: https://www.7-zip.org/sdk.html
-2. Download the latest LZMA SDK (e.g., `lzma2501.7z`)
+2. Download the latest LZMA SDK (e.g., `lzma2606.7z`)
 3. Extract the archive
 
 ### 2. Backup Current SDK
@@ -209,6 +209,7 @@ git commit -m "Update LZMA SDK to version X.XX"
 | Gem Version | SDK Version | Tested |
 |-------------|-------------|--------|
 | 0.1.0       | 25.01       | ✅ Yes  |
+| 0.1.0       | 26.06       | ✅ Yes  |
 
 ## Additional Resources
 

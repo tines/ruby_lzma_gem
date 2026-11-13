@@ -5,7 +5,7 @@ module RubyLzma
   VERSION = "0.1.0"
 
   # Get LZMA SDK version
-  # @return [String] SDK version (e.g., "25.01")
+  # @return [String] SDK version (e.g., "26.06")
   def self.sdk_version
     require_relative "ffi/library"
     FFI::Library.sz_get_version
